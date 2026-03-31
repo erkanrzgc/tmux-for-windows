@@ -344,23 +344,38 @@ function Test-BridgeLabelExists {
   return (Invoke-BridgeProbe -Arguments @('resolve', $Label))
 }
 
-function Wait-BridgeReady {
-  param([string]$Target)
+function Wait-BridgeTargetsReady {
+  param([string[]]$Targets)
 
   if ($script:DryRun) {
-    Write-Host "DRYRUN wait for target '$Target'"
+    foreach ($target in $Targets) {
+      Write-Host "DRYRUN wait for target '$target'"
+    }
     return
   }
 
-  $deadline = (Get-Date).AddSeconds($script:ReadyTimeoutSeconds)
-  while ((Get-Date) -lt $deadline) {
-    if (Invoke-BridgeProbe -Arguments @('read', $Target, '1')) {
-      return
-    }
-    Start-Sleep -Milliseconds 500
+  $pending = New-Object System.Collections.Generic.HashSet[string]
+  foreach ($target in $Targets) {
+    [void]$pending.Add($target)
   }
 
-  throw "Timed out waiting for bridge target '$Target' to become ready."
+  $deadline = (Get-Date).AddSeconds($ReadyTimeoutSeconds)
+  while (($pending.Count -gt 0) -and ((Get-Date) -lt $deadline)) {
+    foreach ($target in @($pending)) {
+      if (Invoke-BridgeProbe -Arguments @('read', $target, '1')) {
+        [void]$pending.Remove($target)
+        Write-StartupTrace "bridge target ready: $target"
+      }
+    }
+
+    if ($pending.Count -gt 0) {
+      Start-Sleep -Milliseconds 500
+    }
+  }
+
+  if ($pending.Count -gt 0) {
+    throw "Timed out waiting for bridge target(s) '$($pending -join ", ")' to become ready."
+  }
 }
 
 function Test-AgentChatReady {
@@ -399,32 +414,6 @@ function Test-AgentChatReady {
       return $false
     }
   }
-}
-
-function Wait-AgentChatReady {
-  param(
-    [string]$Target,
-    [string]$Role
-  )
-
-  if ($script:DryRun) {
-    Write-Host "DRYRUN wait for chat prompt '$Role'"
-    return
-  }
-
-  $deadline = (Get-Date).AddSeconds($ChatReadyTimeoutSeconds)
-  while ((Get-Date) -lt $deadline) {
-    try {
-      $output = Invoke-BridgeStdOut -Arguments @('read', $Target, '40')
-      if (Test-AgentChatReady -Role $Role -Output $output) {
-        return
-      }
-    } catch {}
-
-    Start-Sleep -Milliseconds 1000
-  }
-
-  throw "Timed out waiting for $Role chat prompt in bridge target '$Target'."
 }
 
 function Get-BridgePaneId {
@@ -483,6 +472,89 @@ function Send-BridgeText {
   Invoke-BridgeCommand -Arguments @('read', $Target, '20') -Quiet
   Write-StartupTrace "keys $Target Enter"
   Invoke-BridgeCommand -Arguments @('keys', $Target, 'Enter') -Quiet
+}
+
+function Start-AsyncIntroDelivery {
+  param(
+    [string]$Target,
+    [string]$Role,
+    [string]$Text
+  )
+
+  if ($script:DryRun) {
+    Write-StartupTrace "intro watcher scheduled: $Target"
+    Write-Host "DRYRUN async intro watcher '$Target'"
+    return
+  }
+
+  $encodedCommand = ConvertTo-EncodedPowerShellCommand -Command @"
+`$ErrorActionPreference = 'SilentlyContinue'
+function Test-AgentChatReady {
+  param(
+    [string]`$Role,
+    [string]`$Output
+  )
+
+  if (-not `$Output) {
+    return `$false
+  }
+
+  `$normalized = (`$Output -replace '\s+', ' ').Trim()
+  if (-not `$normalized) {
+    return `$false
+  }
+
+  switch (`$Role) {
+    'claude' {
+      return (
+        `$normalized -match 'How can I help you' -or
+        `$normalized -match '\[Opus' -or
+        `$normalized -match '\bContext'
+      )
+    }
+    'codex' {
+      return (
+        (`$normalized -match 'gpt-' -and `$normalized -match 'left') -or
+        `$normalized -match '/model' -or
+        `$normalized -match 'Find and fix a bug' -or
+        `$normalized -match 'Explain this codebase'
+      )
+    }
+    default {
+      return `$false
+    }
+  }
+}
+
+`$NodePath = $(Quote-PowerShellLiteral $script:NodePath)
+`$BridgePath = $(Quote-PowerShellLiteral $script:BridgePath)
+`$Target = $(Quote-PowerShellLiteral $Target)
+`$Role = $(Quote-PowerShellLiteral $Role)
+`$Text = $(Quote-PowerShellLiteral $Text)
+`$Deadline = (Get-Date).AddSeconds($ChatReadyTimeoutSeconds)
+
+while ((Get-Date) -lt `$Deadline) {
+  try {
+    `$output = & `$NodePath `$BridgePath read `$Target 40 2>`$null
+    if (Test-AgentChatReady -Role `$Role -Output (`$output -join \"`n\")) {
+      & `$NodePath `$BridgePath read `$Target 20 1>`$null 2>`$null
+      & `$NodePath `$BridgePath type `$Target `$Text 1>`$null 2>`$null
+      Start-Sleep -Milliseconds 250
+      & `$NodePath `$BridgePath read `$Target 20 1>`$null 2>`$null
+      & `$NodePath `$BridgePath keys `$Target Enter 1>`$null 2>`$null
+      break
+    }
+  } catch {}
+
+  Start-Sleep -Milliseconds 1000
+}
+"@
+
+  Start-Process -FilePath 'powershell.exe' `
+    -WindowStyle Hidden `
+    -ArgumentList @('-NoLogo', '-NoProfile', '-EncodedCommand', $encodedCommand) | Out-Null
+
+  Write-StartupTrace "intro watcher scheduled: $Target"
 }
 
 function Write-StartupTrace {
@@ -610,18 +682,10 @@ if (-not $usedWindowsTerminal) {
 }
 
 Write-Host 'Waiting for wrapped panes to come online...'
-Wait-BridgeReady -Target 'claude'
-Wait-BridgeReady -Target 'codex'
+Wait-BridgeTargetsReady -Targets @('claude', 'codex')
 $script:VerboseTargets = @('claude', 'codex')
-Write-StartupTrace 'bridge target ready: claude'
-Write-StartupTrace 'bridge target ready: codex'
 Assert-BridgeSession -LeftTarget 'claude' -RightTarget 'codex'
 Write-StartupTrace 'bridge verified: claude <-> codex'
-Write-Host 'Waiting for chat prompts...'
-Wait-AgentChatReady -Target 'claude' -Role 'claude'
-Wait-AgentChatReady -Target 'codex' -Role 'codex'
-Write-StartupTrace 'chat prompt ready: claude'
-Write-StartupTrace 'chat prompt ready: codex'
 
 if ($StartupDelaySeconds -gt 0) {
   Write-Host "Waiting $StartupDelaySeconds seconds for the agents to settle..."
@@ -634,9 +698,9 @@ if ($StartupDelaySeconds -gt 0) {
 }
 
 if (-not $SkipIntro) {
-  Write-Host 'Sending intro prompts...'
-  Send-BridgeText -Target 'claude' -Text $claudeIntro
-  Send-BridgeText -Target 'codex' -Text $codexIntro
+  Write-Host 'Scheduling intro prompts...'
+  Start-AsyncIntroDelivery -Target 'claude' -Role 'claude' -Text $claudeIntro
+  Start-AsyncIntroDelivery -Target 'codex' -Role 'codex' -Text $codexIntro
 }
 
 Write-Host 'Duo session is ready.'
