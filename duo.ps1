@@ -8,7 +8,7 @@ param(
   [string]$SplitDirection = 'vertical',
   [ValidateRange(0.1, 0.9)]
   [double]$SplitRatio = 0.5,
-  [int]$StartupDelaySeconds = 1,
+  [int]$StartupDelaySeconds = 0,
   [int]$ReadyTimeoutSeconds = 30,
   [int]$ChatReadyTimeoutSeconds = 90,
   [switch]$AllowSeparateWindows,
@@ -576,29 +576,17 @@ foreach ($label in @('claude', 'codex')) {
 }
 
 $claudeIntro = Join-MessageParts @(
-  'You are in a duo session.'
-  'There is OpenAI Codex running in the right pane.'
-  'To communicate with it use win-bridge:'
-  '1) win-bridge read codex 20'
-  '2) win-bridge message codex "your message"'
-  '3) win-bridge read codex 20'
-  '4) win-bridge keys codex Enter'
-  'When codex replies, you will see [codex] ... in your pane.'
-  'DO NOT WAIT OR POLL.'
   "Read '.duo/DUO.md' first."
+  "In this session, 'codex' means the local right pane."
+  'Use the local win-bridge command documented in that file.'
+  'Do not continue until you have read it.'
 )
 
 $codexIntro = Join-MessageParts @(
-  'You are in a duo session.'
-  'There is Claude Code running in the left pane.'
-  'To communicate with it use win-bridge:'
-  '1) win-bridge read claude 20'
-  '2) win-bridge message claude "your message"'
-  '3) win-bridge read claude 20'
-  '4) win-bridge keys claude Enter'
-  'When claude replies, you will see [claude] ... in your pane.'
-  'DO NOT WAIT OR POLL.'
   "Read '.duo/DUO.md' first."
+  "In this session, 'claude' means the local left pane."
+  'Use the local win-bridge command documented in that file.'
+  'Do not continue until you have read it.'
 )
 
 $wrappedShell = 'powershell.exe'
