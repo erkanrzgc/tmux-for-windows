@@ -12,6 +12,7 @@ param(
   [int]$ReadyTimeoutSeconds = 30,
   [int]$ChatReadyTimeoutSeconds = 90,
   [switch]$AllowSeparateWindows,
+  [switch]$BackgroundSetup,
   [switch]$SkipIntro,
   [switch]$DryRun
 )
@@ -353,6 +354,9 @@ function Wait-BridgeTargetsReady {
       if (Invoke-BridgeProbe -Arguments @('read', $target, '1')) {
         [void]$pending.Remove($target)
         Write-StartupTrace "bridge target ready: $target"
+        if ($BackgroundSetup -and -not $DryRun) {
+          Send-BridgeStatus -Targets @($target) -Text "bridge target ready: $target"
+        }
       }
     }
 
@@ -445,6 +449,19 @@ function Assert-BridgeSession {
   Write-Host ("Bridge verified: {0} ({1}) <-> {2} ({3})" -f $LeftTarget, $leftId, $RightTarget, $rightId)
 }
 
+function Send-BridgeStatus {
+  param(
+    [string[]]$Targets,
+    [string]$Text
+  )
+
+  foreach ($target in $Targets) {
+    try {
+      Invoke-BridgeCommand -Arguments @('notify', $target, $Text) -Quiet
+    } catch {}
+  }
+}
+
 function Send-BridgeText {
   param(
     [string]$Target,
@@ -488,6 +505,9 @@ function Start-AsyncIntroDelivery {
     ) | Out-Null
 
   Write-StartupTrace "intro watcher scheduled: $Target"
+  if ($BackgroundSetup) {
+    Send-BridgeStatus -Targets @($Target) -Text "intro watcher scheduled: $Target"
+  }
 }
 
 function Write-StartupTrace {
@@ -495,6 +515,81 @@ function Write-StartupTrace {
 
   $script:StartupTraceLog.Add($Text)
   Write-Host "[startup] $Text"
+}
+
+function Invoke-DuoBackgroundSetup {
+  param(
+    [string]$ClaudeIntro,
+    [string]$CodexIntro
+  )
+
+  try {
+    Wait-BridgeTargetsReady -Targets @('claude', 'codex')
+    $script:VerboseTargets = @('claude', 'codex')
+    Assert-BridgeSession -LeftTarget 'claude' -RightTarget 'codex'
+    Write-StartupTrace 'bridge verified: claude <-> codex'
+    Send-BridgeStatus -Targets @('claude', 'codex') -Text 'bridge verified: claude <-> codex'
+
+    if ($StartupDelaySeconds -gt 0) {
+      Write-StartupTrace "settle delay: ${StartupDelaySeconds}s"
+      if (-not $DryRun) {
+        Start-Sleep -Seconds $StartupDelaySeconds
+      }
+    }
+
+    if (-not $SkipIntro) {
+      Start-AsyncIntroDelivery -Target 'claude' -Role 'claude' -Text $ClaudeIntro
+      Start-AsyncIntroDelivery -Target 'codex' -Role 'codex' -Text $CodexIntro
+    }
+  } catch {
+    $message = $_.Exception.Message
+    Write-StartupTrace "startup error: $message"
+    Send-BridgeStatus -Targets @('claude', 'codex') -Text "startup error: $message"
+    if (-not $DryRun) {
+      exit 1
+    }
+    throw
+  }
+}
+
+function Start-AsyncDuoSetup {
+  param(
+    [string]$ClaudeIntro,
+    [string]$CodexIntro
+  )
+
+  if ($DryRun) {
+    Write-Host 'DRYRUN background duo setup'
+    Invoke-DuoBackgroundSetup -ClaudeIntro $ClaudeIntro -CodexIntro $CodexIntro
+    return
+  }
+
+  $argumentList = @(
+    '-NoLogo',
+    '-NoProfile',
+    '-ExecutionPolicy',
+    'Bypass',
+    '-File',
+    $script:SelfPath,
+    '-BackgroundSetup',
+    '-ProjectDir',
+    $script:ProjectDir,
+    '-ReadyTimeoutSeconds',
+    [string]$ReadyTimeoutSeconds,
+    '-ChatReadyTimeoutSeconds',
+    [string]$ChatReadyTimeoutSeconds,
+    '-StartupDelaySeconds',
+    [string]$StartupDelaySeconds
+  )
+
+  if ($SkipIntro) {
+    $argumentList += '-SkipIntro'
+  }
+
+  Start-Process -FilePath 'powershell.exe' `
+    -WorkingDirectory $script:ProjectDir `
+    -WindowStyle Hidden `
+    -ArgumentList $argumentList | Out-Null
 }
 
 function Start-StandaloneWindow {
@@ -558,12 +653,21 @@ $ProjectDir = (Resolve-Path -LiteralPath $ProjectDir).Path
 $NodePath = (Get-Command node -ErrorAction Stop).Source
 $BridgePath = Join-Path $PSScriptRoot 'bin\win-bridge.js'
 $BridgeCommand = "node $(Quote-PowerShellLiteral $BridgePath)"
+$script:SelfPath = $PSCommandPath
 
 if (-not (Test-Path -LiteralPath $BridgePath)) {
   throw "Cannot find win-bridge entrypoint at '$BridgePath'."
 }
 
 Ensure-DuoInstructionFiles -ProjectDir $ProjectDir -BridgePath $BridgePath
+
+$claudeIntro = 'Read .duo/DUO.md.'
+$codexIntro = 'Read .duo/DUO.md.'
+
+if ($BackgroundSetup) {
+  Invoke-DuoBackgroundSetup -ClaudeIntro $claudeIntro -CodexIntro $codexIntro
+  return
+}
 
 [void](Resolve-CommandOrThrow -CommandName $ClaudeProgram -Role 'Claude')
 [void](Resolve-CommandOrThrow -CommandName $CodexProgram -Role 'Codex')
@@ -579,9 +683,6 @@ foreach ($label in @('claude', 'codex')) {
     throw "win-bridge label '$label' is already active. Close the existing pane or rename it before starting duo.ps1."
   }
 }
-
-$claudeIntro = 'Read .duo/DUO.md.'
-$codexIntro = 'Read .duo/DUO.md.'
 
 $wrappedShell = 'powershell.exe'
 $claudeStartupCommand = New-ShellStartupCommand -Program $ClaudeProgram -ProgramArgs $ClaudeArgs
@@ -603,29 +704,9 @@ if (-not $usedWindowsTerminal) {
   Start-StandaloneWindow -LauncherCommand $codexLauncher
 }
 
-Write-Host 'Waiting for wrapped panes to come online...'
-Wait-BridgeTargetsReady -Targets @('claude', 'codex')
-$script:VerboseTargets = @('claude', 'codex')
-Assert-BridgeSession -LeftTarget 'claude' -RightTarget 'codex'
-Write-StartupTrace 'bridge verified: claude <-> codex'
-
-if ($StartupDelaySeconds -gt 0) {
-  Write-Host "Waiting $StartupDelaySeconds seconds for the agents to settle..."
-  Write-StartupTrace "settle delay: ${StartupDelaySeconds}s"
-  if ($DryRun) {
-    Write-Host "DRYRUN sleep $StartupDelaySeconds"
-  } else {
-    Start-Sleep -Seconds $StartupDelaySeconds
-  }
-}
-
-if (-not $SkipIntro) {
-  Write-Host 'Scheduling intro prompts...'
-  Start-AsyncIntroDelivery -Target 'claude' -Role 'claude' -Text $claudeIntro
-  Start-AsyncIntroDelivery -Target 'codex' -Role 'codex' -Text $codexIntro
-}
-
-Write-Host 'Duo session is ready.'
+Write-Host 'Background startup will continue inside the duo panes.'
+Start-AsyncDuoSetup -ClaudeIntro $claudeIntro -CodexIntro $codexIntro
+Write-Host 'Duo session launched.'
 if ($usedWindowsTerminal) {
   Write-Host 'Launched in Windows Terminal split panes: Claude left, Codex right.'
 }
