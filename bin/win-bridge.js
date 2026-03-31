@@ -8,6 +8,35 @@ const { markRead, requireRead, clearRead } = require('../lib/guard');
 
 const VERSION = '1.0.0';
 
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function isAgentChatReady(role, output) {
+  if (!output) return false;
+
+  const normalized = String(output).replace(/\s+/g, ' ').trim();
+  if (!normalized) return false;
+
+  switch (role) {
+    case 'claude':
+      return (
+        /How can I help you/i.test(normalized) ||
+        /\[Opus/i.test(normalized) ||
+        /\bContext/i.test(normalized)
+      );
+    case 'codex':
+      return (
+        (/gpt-/i.test(normalized) && /\bleft\b/i.test(normalized)) ||
+        /\/model/i.test(normalized) ||
+        /Find and fix a bug/i.test(normalized) ||
+        /Explain this codebase/i.test(normalized)
+      );
+    default:
+      return false;
+  }
+}
+
 // --- Helpers ---
 
 function die(msg) {
@@ -38,6 +67,8 @@ Commands:
   notify <target> <text>        Print a local status message in a pane
   type <target> <text>          Type text into a pane (no Enter)
   submit <target> <text>        Type text and press Enter
+  wait-submit <target> <role> <timeoutSeconds> <text>
+                                Wait for a chat prompt, then submit text
   message <target> <text>       Type text with a sender label
   read <target> [lines]         Read last N lines from pane (default: 50)
   keys <target> <key>...        Send special keys (Enter, Escape, C-c, etc.)
@@ -131,6 +162,35 @@ async function cmdSubmit(target, text) {
   const res = await sendCommand(target, { cmd: 'submit', text, keys: ['Enter'] });
   if (!res.ok) die(res.error);
   clearRead(entry.id);
+}
+
+async function cmdWaitSubmit(target, role, timeoutSeconds, text) {
+  if (!target || !role || !timeoutSeconds || !text) {
+    die("'wait-submit' requires <target> <role> <timeoutSeconds> <text>. Run 'win-bridge' for usage.");
+  }
+
+  const entry = registry.resolveTarget(target);
+  if (!entry) die(`no pane found with target '${target}'`);
+
+  const timeoutMs = Math.max(1, parseInt(timeoutSeconds, 10) || 0) * 1000;
+  const deadline = Date.now() + timeoutMs;
+
+  while (Date.now() < deadline) {
+    try {
+      const res = await sendCommand(target, { cmd: 'read', lines: 40 });
+      if (res.ok && isAgentChatReady(role, res.output)) {
+        markRead(entry.id);
+        const submitRes = await sendCommand(target, { cmd: 'submit', text, keys: ['Enter'] });
+        if (!submitRes.ok) die(submitRes.error);
+        clearRead(entry.id);
+        return;
+      }
+    } catch {}
+
+    await sleep(1000);
+  }
+
+  die(`timed out waiting for ${role} chat prompt in '${target}'`);
 }
 
 async function cmdMessage(target, text) {
@@ -230,6 +290,7 @@ async function cmdDoctor() {
     }
   }
 
+  // Ping all panes
   let ok = true;
   for (const p of panes) {
     try {
@@ -297,6 +358,9 @@ const cmd = argv[0];
       case 'submit':
       case 'send':
         await cmdSubmit(argv[1], argv[2]);
+        break;
+      case 'wait-submit':
+        await cmdWaitSubmit(argv[1], argv[2], argv[3], argv[4]);
         break;
       case 'message':
       case 'msg':

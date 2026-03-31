@@ -487,72 +487,17 @@ function Start-AsyncIntroDelivery {
     return
   }
 
-  $encodedCommand = ConvertTo-EncodedPowerShellCommand -Command @"
-`$ErrorActionPreference = 'SilentlyContinue'
-function Test-AgentChatReady {
-  param(
-    [string]`$Role,
-    [string]`$Output
-  )
-
-  if (-not `$Output) {
-    return `$false
-  }
-
-  `$normalized = (`$Output -replace '\s+', ' ').Trim()
-  if (-not `$normalized) {
-    return `$false
-  }
-
-  switch (`$Role) {
-    'claude' {
-      return (
-        `$normalized -match 'How can I help you' -or
-        `$normalized -match '\[Opus' -or
-        `$normalized -match '\bContext'
-      )
-    }
-    'codex' {
-      return (
-        (`$normalized -match 'gpt-' -and `$normalized -match 'left') -or
-        `$normalized -match '/model' -or
-        `$normalized -match 'Find and fix a bug' -or
-        `$normalized -match 'Explain this codebase'
-      )
-    }
-    default {
-      return `$false
-    }
-  }
-}
-
-`$NodePath = $(Quote-PowerShellLiteral $script:NodePath)
-`$BridgePath = $(Quote-PowerShellLiteral $script:BridgePath)
-`$Target = $(Quote-PowerShellLiteral $Target)
-`$Role = $(Quote-PowerShellLiteral $Role)
-`$Text = $(Quote-PowerShellLiteral $Text)
-`$Deadline = (Get-Date).AddSeconds($ChatReadyTimeoutSeconds)
-
-while ((Get-Date) -lt `$Deadline) {
-  try {
-    `$output = & `$NodePath `$BridgePath read `$Target 40 2>`$null
-    if (Test-AgentChatReady -Role `$Role -Output (`$output -join \"`n\")) {
-      & `$NodePath `$BridgePath read `$Target 20 1>`$null 2>`$null
-      & `$NodePath `$BridgePath type `$Target `$Text 1>`$null 2>`$null
-      Start-Sleep -Milliseconds 250
-      & `$NodePath `$BridgePath read `$Target 20 1>`$null 2>`$null
-      & `$NodePath `$BridgePath keys `$Target Enter 1>`$null 2>`$null
-      break
-    }
-  } catch {}
-
-  Start-Sleep -Milliseconds 1000
-}
-"@
-
-  Start-Process -FilePath 'powershell.exe' `
+  Start-Process -FilePath $script:NodePath `
+    -WorkingDirectory $script:ProjectDir `
     -WindowStyle Hidden `
-    -ArgumentList @('-NoLogo', '-NoProfile', '-EncodedCommand', $encodedCommand) | Out-Null
+    -ArgumentList @(
+      $script:BridgePath,
+      'wait-submit',
+      $Target,
+      $Role,
+      [string]$ChatReadyTimeoutSeconds,
+      $Text
+    ) | Out-Null
 
   Write-StartupTrace "intro watcher scheduled: $Target"
 }
