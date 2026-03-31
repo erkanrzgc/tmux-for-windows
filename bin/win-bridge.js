@@ -57,11 +57,32 @@ Environment:
   process.exit(0);
 }
 
+async function pruneUnreachablePanes() {
+  registry.cleanup();
+  const panes = registry.list();
+  const reachable = [];
+  const removed = [];
+
+  for (const pane of panes) {
+    try {
+      const res = await sendCommand(pane.id, { cmd: 'ping' });
+      if (res && res.pong) {
+        reachable.push(pane);
+        continue;
+      }
+    } catch {}
+
+    registry.unregister(pane.id);
+    removed.push(pane);
+  }
+
+  return { panes: reachable, removed };
+}
+
 // --- Commands ---
 
 async function cmdList() {
-  registry.cleanup();
-  const panes = registry.list();
+  const { panes } = await pruneUnreachablePanes();
 
   if (panes.length === 0) {
     console.log('No active panes. Start one with: win-bridge wrap <name>');
@@ -199,12 +220,16 @@ async function cmdDoctor() {
     console.log('node-pty:         NOT installed (run: npm install)');
   }
 
-  // Check registry
-  registry.cleanup();
-  const panes = registry.list();
+  // Check registry and auto-prune stale entries
+  const { panes, removed } = await pruneUnreachablePanes();
   console.log(`Active panes:     ${panes.length}`);
+  if (removed.length > 0) {
+    console.log(`Pruned stale:     ${removed.length}`);
+    for (const pane of removed) {
+      console.log(`  ${pane.id} (${pane.label || '-'}): removed stale registry entry`);
+    }
+  }
 
-  // Ping all panes
   let ok = true;
   for (const p of panes) {
     try {

@@ -72,6 +72,7 @@ duo -DryRun
 ```
 
 `duo doctor` checks whether PowerShell, Windows Terminal, Claude Code, Codex, `win-bridge`, and `duo` are available on your machine.
+`win-bridge doctor` also prunes stale pane entries from the local registry when it finds unreachable panes.
 
 ## win-bridge Commands
 
