@@ -1,0 +1,37 @@
+{
+  "name": "win-bridge",
+  "version": "1.0.0",
+  "description": "Windows split-pane bridge for AI agent collaboration",
+  "main": "bin/win-bridge.js",
+  "bin": {
+    "win-bridge": "./bin/win-bridge.js",
+    "duo": "./bin/duo.js"
+  },
+  "scripts": {
+    "postinstall": "node lib/postinstall.js"
+  },
+  "keywords": [
+    "windows-terminal",
+    "terminal",
+    "bridge",
+    "panes",
+    "agents",
+    "claude",
+    "codex"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/erkanrzgc/tmux-for-windows.git"
+  },
+  "homepage": "https://github.com/erkanrzgc/tmux-for-windows#readme",
+  "bugs": {
+    "url": "https://github.com/erkanrzgc/tmux-for-windows/issues"
+  },
+  "license": "MIT",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "node-pty": "^1.0.0"
+  }
+}
