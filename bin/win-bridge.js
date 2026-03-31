@@ -4,9 +4,9 @@
 const path = require('path');
 const registry = require('../lib/registry');
 const { sendCommand } = require('../lib/client');
-const { markRead, requireRead, clearRead } = require('../lib/guard');
 
 const VERSION = '1.0.0';
+const WAIT_SUBMIT_POLL_MS = 250;
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -69,7 +69,7 @@ Commands:
   submit <target> <text>        Type text and press Enter
   wait-submit <target> <role> <timeoutSeconds> <text>
                                 Wait for a chat prompt, then submit text
-  message <target> <text>       Type text with a sender label
+  message <target> <text>       Send text with a sender label and press Enter
   read <target> [lines]         Read last N lines from pane (default: 50)
   keys <target> <key>...        Send special keys (Enter, Escape, C-c, etc.)
   name <target> <label>         Label a pane
@@ -135,11 +135,9 @@ async function cmdType(target, text) {
 
   const entry = registry.resolveTarget(target);
   if (!entry) die(`no pane found with target '${target}'`);
-  requireRead(entry.id);
 
   const res = await sendCommand(target, { cmd: 'type', text });
   if (!res.ok) die(res.error);
-  clearRead(entry.id);
 }
 
 async function cmdNotify(target, text) {
@@ -157,11 +155,9 @@ async function cmdSubmit(target, text) {
 
   const entry = registry.resolveTarget(target);
   if (!entry) die(`no pane found with target '${target}'`);
-  requireRead(entry.id);
 
   const res = await sendCommand(target, { cmd: 'submit', text, keys: ['Enter'] });
   if (!res.ok) die(res.error);
-  clearRead(entry.id);
 }
 
 async function cmdWaitSubmit(target, role, timeoutSeconds, text) {
@@ -177,17 +173,15 @@ async function cmdWaitSubmit(target, role, timeoutSeconds, text) {
 
   while (Date.now() < deadline) {
     try {
-      const res = await sendCommand(target, { cmd: 'read', lines: 40 });
+      const res = await sendCommand(target, { cmd: 'read', lines: 20 });
       if (res.ok && isAgentChatReady(role, res.output)) {
-        markRead(entry.id);
         const submitRes = await sendCommand(target, { cmd: 'submit', text, keys: ['Enter'] });
         if (!submitRes.ok) die(submitRes.error);
-        clearRead(entry.id);
         return;
       }
     } catch {}
 
-    await sleep(1000);
+    await sleep(WAIT_SUBMIT_POLL_MS);
   }
 
   die(`timed out waiting for ${role} chat prompt in '${target}'`);
@@ -198,16 +192,14 @@ async function cmdMessage(target, text) {
 
   const entry = registry.resolveTarget(target);
   if (!entry) die(`no pane found with target '${target}'`);
-  requireRead(entry.id);
 
   const senderPane = process.env.WIN_BRIDGE_PANE || '?';
   const senderName = process.env.WIN_BRIDGE_NAME || senderPane;
   const header = formatMessageHeader(senderName, senderPane);
   const fullText = `${header} ${text}`;
 
-  const res = await sendCommand(target, { cmd: 'type', text: fullText });
+  const res = await sendCommand(target, { cmd: 'submit', text: fullText, keys: ['Enter'] });
   if (!res.ok) die(res.error);
-  clearRead(entry.id);
 }
 
 async function cmdRead(target, lines) {
@@ -221,7 +213,6 @@ async function cmdRead(target, lines) {
   if (!res.ok) die(res.error);
 
   console.log(res.output);
-  markRead(entry.id);
 }
 
 async function cmdKeys(target, keys) {
@@ -229,11 +220,9 @@ async function cmdKeys(target, keys) {
 
   const entry = registry.resolveTarget(target);
   if (!entry) die(`no pane found with target '${target}'`);
-  requireRead(entry.id);
 
   const res = await sendCommand(target, { cmd: 'keys', keys });
   if (!res.ok) die(res.error);
-  clearRead(entry.id);
 }
 
 async function cmdName(target, label) {

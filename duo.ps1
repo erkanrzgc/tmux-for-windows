@@ -172,28 +172,16 @@ Do not:
 - poll the target pane for a reply
 - repeatedly read the target pane to check if it answered
 
-Only read a target pane:
-- before interacting with it
-- after typing to verify the text landed before Enter
-- when the target is a plain shell or prompt
-
-## Read Guard
-
-- The CLI enforces read-before-act.
-- Read before message, type, submit, or keys.
-- After each interaction, read again before the next interaction.
+Read a target pane only when you want to inspect its visible output or a plain shell prompt.
 
 ## Agent Workflow
 
-1. $bridgeCommand read <other-pane> 20
-2. $bridgeCommand message <other-pane> "your message"
-3. $bridgeCommand read <other-pane> 20
-4. $bridgeCommand keys <other-pane> Enter
-5. Stop. Do not poll. Wait for the reply in your own pane.
+1. $bridgeCommand message <other-pane> "your message"
+2. Stop. Do not poll. Wait for the reply in your own pane.
 
 ## Non-Agent Panes
 
-For plain shells or prompts, read again after submitting to inspect the result.
+For plain shells or prompts, use read when you want to inspect the result after submit or keys.
 "@
 
   $agentsDoc = @"
@@ -592,19 +580,8 @@ foreach ($label in @('claude', 'codex')) {
   }
 }
 
-$claudeIntro = Join-MessageParts @(
-  "Read '.duo/DUO.md' first."
-  "In this session, 'codex' means the local right pane."
-  'Use the local win-bridge command documented in that file.'
-  'Do not continue until you have read it.'
-)
-
-$codexIntro = Join-MessageParts @(
-  "Read '.duo/DUO.md' first."
-  "In this session, 'claude' means the local left pane."
-  'Use the local win-bridge command documented in that file.'
-  'Do not continue until you have read it.'
-)
+$claudeIntro = 'Read .duo/DUO.md.'
+$codexIntro = 'Read .duo/DUO.md.'
 
 $wrappedShell = 'powershell.exe'
 $claudeStartupCommand = New-ShellStartupCommand -Program $ClaudeProgram -ProgramArgs $ClaudeArgs
