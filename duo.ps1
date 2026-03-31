@@ -10,6 +10,7 @@ param(
   [double]$SplitRatio = 0.5,
   [int]$StartupDelaySeconds = 1,
   [int]$ReadyTimeoutSeconds = 30,
+  [int]$ChatReadyTimeoutSeconds = 90,
   [switch]$AllowSeparateWindows,
   [switch]$SkipIntro,
   [switch]$DryRun
@@ -362,6 +363,70 @@ function Wait-BridgeReady {
   throw "Timed out waiting for bridge target '$Target' to become ready."
 }
 
+function Test-AgentChatReady {
+  param(
+    [string]$Role,
+    [string]$Output
+  )
+
+  if (-not $Output) {
+    return $false
+  }
+
+  $normalized = ($Output -replace '\s+', ' ').Trim()
+  if (-not $normalized) {
+    return $false
+  }
+
+  switch ($Role) {
+    'claude' {
+      return (
+        $normalized -match 'How can I help you' -or
+        $normalized -match '❯' -or
+        $normalized -match '\[Opus' -or
+        $normalized -match '\bContext'
+      )
+    }
+    'codex' {
+      return (
+        ($normalized -match 'gpt-' -and $normalized -match 'left') -or
+        $normalized -match '› ' -or
+        $normalized -match '/model' -or
+        $normalized -match 'Find and fix a bug'
+      )
+    }
+    default {
+      return $false
+    }
+  }
+}
+
+function Wait-AgentChatReady {
+  param(
+    [string]$Target,
+    [string]$Role
+  )
+
+  if ($script:DryRun) {
+    Write-Host "DRYRUN wait for chat prompt '$Role'"
+    return
+  }
+
+  $deadline = (Get-Date).AddSeconds($ChatReadyTimeoutSeconds)
+  while ((Get-Date) -lt $deadline) {
+    try {
+      $output = Invoke-BridgeStdOut -Arguments @('read', $Target, '40')
+      if (Test-AgentChatReady -Role $Role -Output $output) {
+        return
+      }
+    } catch {}
+
+    Start-Sleep -Milliseconds 1000
+  }
+
+  throw "Timed out waiting for $Role chat prompt in bridge target '$Target'."
+}
+
 function Get-BridgePaneId {
   param([string]$Target)
 
@@ -411,8 +476,13 @@ function Send-BridgeText {
 
   Write-StartupTrace "read $Target 20"
   Invoke-BridgeCommand -Arguments @('read', $Target, '20') -Quiet
-  Write-StartupTrace "submit $Target <duo intro>"
-  Invoke-BridgeCommand -Arguments @('submit', $Target, $Text) -Quiet
+  Write-StartupTrace "type $Target <duo intro>"
+  Invoke-BridgeCommand -Arguments @('type', $Target, $Text) -Quiet
+  Start-Sleep -Milliseconds 250
+  Write-StartupTrace "read $Target 20"
+  Invoke-BridgeCommand -Arguments @('read', $Target, '20') -Quiet
+  Write-StartupTrace "keys $Target Enter"
+  Invoke-BridgeCommand -Arguments @('keys', $Target, 'Enter') -Quiet
 }
 
 function Write-StartupTrace {
@@ -559,6 +629,11 @@ Write-StartupTrace 'bridge target ready: claude'
 Write-StartupTrace 'bridge target ready: codex'
 Assert-BridgeSession -LeftTarget 'claude' -RightTarget 'codex'
 Write-StartupTrace 'bridge verified: claude <-> codex'
+Write-Host 'Waiting for chat prompts...'
+Wait-AgentChatReady -Target 'claude' -Role 'claude'
+Wait-AgentChatReady -Target 'codex' -Role 'codex'
+Write-StartupTrace 'chat prompt ready: claude'
+Write-StartupTrace 'chat prompt ready: codex'
 
 if ($StartupDelaySeconds -gt 0) {
   Write-Host "Waiting $StartupDelaySeconds seconds for the agents to settle..."
