@@ -20,7 +20,15 @@ This project is inspired by tmux-based agent workflows on Linux, but it is imple
 
 ## Install From Source
 
-Use this exact flow:
+Recommended:
+
+```powershell
+git clone https://github.com/erkanrzgc/tmux-for-windows.git
+cd tmux-for-windows
+powershell -ExecutionPolicy Bypass -File .\install.ps1
+```
+
+Manual flow:
 
 ```powershell
 git clone https://github.com/erkanrzgc/tmux-for-windows.git
@@ -33,6 +41,7 @@ duo -DryRun
 
 What each step does:
 
+- `install.ps1` runs the full source install and verification flow for Windows
 - `npm install` installs the local project dependencies
 - `npm link` links `win-bridge` and `duo` into your user PATH
 - `win-bridge version` confirms the CLI is callable
