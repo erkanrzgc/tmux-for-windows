@@ -223,6 +223,9 @@ async function cmdDoctor() {
 
   console.log('---');
   console.log(`Status: ${ok ? 'OK' : 'ISSUES DETECTED'}`);
+  if (!ok) {
+    process.exitCode = 1;
+  }
 }
 
 function cmdWrap(name, command, args) {

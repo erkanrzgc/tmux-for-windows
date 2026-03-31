@@ -18,14 +18,32 @@ This project is inspired by tmux-based agent workflows on Linux, but it is imple
 - `claude` available on `PATH`
 - `codex` available on `PATH`
 
-## Install
+## Install From Source
+
+Use this exact flow:
 
 ```powershell
+git clone https://github.com/erkanrzgc/tmux-for-windows.git
+cd tmux-for-windows
 npm install
 npm link
+win-bridge version
+duo -DryRun
 ```
 
-This makes `win-bridge` and `duo` available as commands.
+What each step does:
+
+- `npm install` installs the local project dependencies
+- `npm link` links `win-bridge` and `duo` into your user PATH
+- `win-bridge version` confirms the CLI is callable
+- `duo -DryRun` confirms the launch script and bridge flow resolve correctly without opening a real session
+
+If you want a broader environment check, run:
+
+```powershell
+duo doctor
+win-bridge doctor
+```
 
 ## Quick Start
 
@@ -42,6 +60,18 @@ duo -ProjectDir C:\path\to\project
 ```
 
 `duo` opens a left/right split, starts Claude Code and OpenAI Codex, verifies the bridge, then sends each pane a short collaboration intro.
+
+## Troubleshooting
+
+Use these commands first:
+
+```powershell
+duo doctor
+win-bridge doctor
+duo -DryRun
+```
+
+`duo doctor` checks whether PowerShell, Windows Terminal, Claude Code, Codex, `win-bridge`, and `duo` are available on your machine.
 
 ## win-bridge Commands
 
