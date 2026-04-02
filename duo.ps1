@@ -127,6 +127,32 @@ function Ensure-TextFileIfMissing {
   Write-Host "Created $(Split-Path -Leaf $Path)"
 }
 
+function Add-DuoHeader {
+  param(
+    [string]$Path,
+    [string]$Header,
+    [string]$FallbackContent
+  )
+
+  if (-not (Test-Path -LiteralPath $Path)) {
+    Write-TextFile -Path $Path -Content $FallbackContent
+    Write-Host "Created $(Split-Path -Leaf $Path)"
+    return
+  }
+
+  $existing = Get-Content -LiteralPath $Path -Raw -ErrorAction SilentlyContinue
+  if ($existing -match 'Read \.duo/DUO\.md') {
+    Write-Host "Keeping existing $(Split-Path -Leaf $Path) (already has DUO.md instruction)"
+    return
+  }
+
+  $newContent = $Header + "`n`n" + $existing
+  if (-not $script:DryRun) {
+    Set-Content -LiteralPath $Path -Value $newContent -Encoding utf8
+  }
+  Write-Host "Updated $(Split-Path -Leaf $Path) with DUO.md instruction"
+}
+
 function Ensure-DuoInstructionFiles {
   param(
     [string]$ProjectDir,
@@ -188,21 +214,96 @@ For plain shells or prompts, use read when you want to inspect the result after 
   $agentsDoc = @"
 Read .duo/DUO.md first.
 
-In this project, claude means the local left pane.
-Treat that bridge as already available and local.
+# Duo Session — Codex (right pane)
+
+You are the RIGHT pane in a local duo session. The LEFT pane is Claude Code (label: claude).
+
+## Bridge Commands
+
+Send a message to the other agent:
+  $bridgeCommand message claude "your message"
+
+Do NOT poll or wait after sending. The reply appears directly in your pane.
+
+## Rules
+
+- claude and codex are local pane labels, not plugins, services, or installers.
+- You are already connected to the bridge. Do not attempt setup.
+- Never sleep, poll, or repeatedly read the other pane for a reply.
+- Read a target pane only to inspect its visible terminal output.
+
+## Workflow
+
+1. $bridgeCommand message claude "your request"
+2. Stop. The reply arrives in your pane automatically.
 "@
 
   $claudeDoc = @"
 Read .duo/DUO.md first.
 
-In this project, codex means the local right pane.
-Treat that bridge as already available and local.
+# Duo Session — Claude Code (left pane)
+
+You are the LEFT pane in a local duo session. The RIGHT pane is OpenAI Codex (label: codex).
+
+## Bridge Commands
+
+Send a message to the other agent:
+  $bridgeCommand message codex "your message"
+
+Do NOT poll or wait after sending. The reply appears directly in your pane.
+
+## Rules
+
+- claude and codex are local pane labels, not plugins, services, or installers.
+- You are already connected to the bridge. Do not attempt setup.
+- Never sleep, poll, or repeatedly read the other pane for a reply.
+- Read a target pane only to inspect its visible terminal output.
+
+## Workflow
+
+1. $bridgeCommand message codex "your request"
+2. Stop. The reply arrives in your pane automatically.
 "@
+
+  $skillDoc = @"
+# win-bridge Commands
+
+Bridge command: win-bridge
+
+## Core Commands
+
+  win-bridge read <target> [lines]       Read last N lines from a pane (default: 20)
+  win-bridge message <target> "text"     Send a labeled message and press Enter
+  win-bridge type <target> "text"        Type text into a pane (no Enter)
+  win-bridge submit <target> "text"      Type text and press Enter
+  win-bridge keys <target> <key>...      Send special keys (Enter, Escape, C-c)
+
+## Agent Communication Flow
+
+  1. win-bridge read <other-pane> 20
+  2. win-bridge message <other-pane> "your message"
+  3. Stop. Do NOT poll. The reply appears in your pane.
+
+## Targets
+
+  claude    Left pane (Claude Code)
+  codex     Right pane (OpenAI Codex)
+
+## Rules
+
+- Do not poll or sleep after sending a message.
+- Replies arrive directly in your pane as [claude] or [codex].
+- Read a pane only to inspect its visible terminal output.
+"@
+
+  $skillPath = Join-Path $ProjectDir 'SKILL.md'
 
   Write-TextFile -Path $duoDocPath -Content $duoDoc
   Write-Host "Prepared $duoDocPath"
-  Ensure-TextFileIfMissing -Path $agentsPath -Content $agentsDoc
-  Ensure-TextFileIfMissing -Path $claudePath -Content $claudeDoc
+  Write-TextFile -Path $skillPath -Content $skillDoc
+  Write-Host "Prepared $skillPath"
+  Add-DuoHeader -Path $agentsPath -Header 'Read .duo/DUO.md first.' -FallbackContent $agentsDoc
+  Add-DuoHeader -Path $claudePath -Header 'Read .duo/DUO.md first.' -FallbackContent $claudeDoc
 }
 
 function New-ShellStartupCommand {
@@ -354,9 +455,6 @@ function Wait-BridgeTargetsReady {
       if (Invoke-BridgeProbe -Arguments @('read', $target, '1')) {
         [void]$pending.Remove($target)
         Write-StartupTrace "bridge target ready: $target"
-        if ($BackgroundSetup -and -not $DryRun) {
-          Send-BridgeStatus -Targets @($target) -Text "bridge target ready: $target"
-        }
       }
     }
 
@@ -479,35 +577,38 @@ function Send-BridgeText {
   Invoke-BridgeCommand -Arguments @('keys', $Target, 'Enter') -Quiet
 }
 
-function Start-AsyncIntroDelivery {
+function Start-IntroWatcher {
   param(
     [string]$Target,
     [string]$Role,
-    [string]$Text
+    [string]$Text,
+    [int]$TimeoutSeconds = 15
   )
 
   if ($script:DryRun) {
-    Write-StartupTrace "intro watcher scheduled: $Target"
-    Write-Host "DRYRUN async intro watcher '$Target'"
+    Write-StartupTrace "intro watcher: $Target"
+    Write-Host "DRYRUN intro watcher '$Target'"
     return
   }
 
+  # Write intro to temp file to avoid Start-Process argument mangling
+  $introFile = Join-Path ([System.IO.Path]::GetTempPath()) "duo-intro-$Target.tmp"
+  Set-Content -LiteralPath $introFile -Value $Text -Encoding utf8 -NoNewline
+
+  # Launch wait-submit-file as background process (parallel for both agents)
   Start-Process -FilePath $script:NodePath `
     -WorkingDirectory $script:ProjectDir `
     -WindowStyle Hidden `
     -ArgumentList @(
       $script:BridgePath,
-      'wait-submit',
+      'wait-submit-file',
       $Target,
       $Role,
-      [string]$ChatReadyTimeoutSeconds,
-      $Text
+      [string]$TimeoutSeconds,
+      $introFile
     ) | Out-Null
 
-  Write-StartupTrace "intro watcher scheduled: $Target"
-  if ($BackgroundSetup) {
-    Send-BridgeStatus -Targets @($Target) -Text "intro watcher scheduled: $Target"
-  }
+  Write-StartupTrace "intro watcher launched: $Target"
 }
 
 function Write-StartupTrace {
@@ -528,7 +629,6 @@ function Invoke-DuoBackgroundSetup {
     $script:VerboseTargets = @('claude', 'codex')
     Assert-BridgeSession -LeftTarget 'claude' -RightTarget 'codex'
     Write-StartupTrace 'bridge verified: claude <-> codex'
-    Send-BridgeStatus -Targets @('claude', 'codex') -Text 'bridge verified: claude <-> codex'
 
     if ($StartupDelaySeconds -gt 0) {
       Write-StartupTrace "settle delay: ${StartupDelaySeconds}s"
@@ -538,13 +638,12 @@ function Invoke-DuoBackgroundSetup {
     }
 
     if (-not $SkipIntro) {
-      Start-AsyncIntroDelivery -Target 'claude' -Role 'claude' -Text $ClaudeIntro
-      Start-AsyncIntroDelivery -Target 'codex' -Role 'codex' -Text $CodexIntro
+      Start-IntroWatcher -Target 'claude' -Role 'claude' -Text $ClaudeIntro
+      Start-IntroWatcher -Target 'codex' -Role 'codex' -Text $CodexIntro
     }
   } catch {
     $message = $_.Exception.Message
     Write-StartupTrace "startup error: $message"
-    Send-BridgeStatus -Targets @('claude', 'codex') -Text "startup error: $message"
     if (-not $DryRun) {
       exit 1
     }
@@ -576,8 +675,6 @@ function Start-AsyncDuoSetup {
     $script:ProjectDir,
     '-ReadyTimeoutSeconds',
     [string]$ReadyTimeoutSeconds,
-    '-ChatReadyTimeoutSeconds',
-    [string]$ChatReadyTimeoutSeconds,
     '-StartupDelaySeconds',
     [string]$StartupDelaySeconds
   )
@@ -661,8 +758,8 @@ if (-not (Test-Path -LiteralPath $BridgePath)) {
 
 Ensure-DuoInstructionFiles -ProjectDir $ProjectDir -BridgePath $BridgePath
 
-$claudeIntro = 'Read .duo/DUO.md.'
-$codexIntro = 'Read .duo/DUO.md.'
+$claudeIntro = 'You are in a duo session. There is a "codex" agent running in the right pane. To communicate with it use win-bridge: 1) win-bridge read codex 20  2) win-bridge message codex "your message"  3) win-bridge read codex 20  4) win-bridge keys codex Enter. When codex replies, you will see [codex] in your pane. You are ready to collaborate.'
+$codexIntro = 'You are in a duo session. There is a "claude" agent running in the left pane. To communicate with it use win-bridge: 1) win-bridge read claude 20  2) win-bridge message claude "your message"  3) win-bridge read claude 20  4) win-bridge keys claude Enter. When claude replies, you will see [claude] in your pane. You are ready to collaborate.'
 
 if ($BackgroundSetup) {
   Invoke-DuoBackgroundSetup -ClaudeIntro $claudeIntro -CodexIntro $codexIntro

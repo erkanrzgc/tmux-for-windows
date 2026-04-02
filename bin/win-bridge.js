@@ -18,19 +18,29 @@ function isAgentChatReady(role, output) {
   const normalized = String(output).replace(/\s+/g, ' ').trim();
   if (!normalized) return false;
 
+  // Catch-all: substantial output means the agent has started
+  const lineCount = output.split('\n').filter(l => l.trim().length > 0).length;
+  if (lineCount >= 8) return true;
+
   switch (role) {
     case 'claude':
       return (
         /How can I help you/i.test(normalized) ||
+        /❯/.test(normalized) ||
         /\[Opus/i.test(normalized) ||
-        /\bContext/i.test(normalized)
+        /\[claude-/i.test(normalized) ||
+        /\bContext\b/i.test(normalized) ||
+        /Try a task/i.test(normalized) ||
+        /What would you like/i.test(normalized)
       );
     case 'codex':
       return (
-        (/gpt-/i.test(normalized) && /\bleft\b/i.test(normalized)) ||
+        /gpt-/i.test(normalized) ||
         /\/model/i.test(normalized) ||
         /Find and fix a bug/i.test(normalized) ||
-        /Explain this codebase/i.test(normalized)
+        /Explain this codebase/i.test(normalized) ||
+        /type your task/i.test(normalized) ||
+        /ask me/i.test(normalized)
       );
     default:
       return false;
@@ -67,6 +77,7 @@ Commands:
   notify <target> <text>        Print a local status message in a pane
   type <target> <text>          Type text into a pane (no Enter)
   submit <target> <text>        Type text and press Enter
+  submit-file <target> <file>  Read text from file and submit
   wait-submit <target> <role> <timeoutSeconds> <text>
                                 Wait for a chat prompt, then submit text
   message <target> <text>       Send text with a sender label and press Enter
@@ -160,6 +171,30 @@ async function cmdSubmit(target, text) {
   if (!res.ok) die(res.error);
 }
 
+async function cmdSubmitFile(target, filePath) {
+  if (!target || !filePath) die("'submit-file' requires <target> and <file>. Run 'win-bridge' for usage.");
+
+  const fs = require('fs');
+  if (!fs.existsSync(filePath)) die(`file not found: ${filePath}`);
+
+  const text = fs.readFileSync(filePath, 'utf8').trim();
+  if (!text) die('file is empty');
+
+  const entry = registry.resolveTarget(target);
+  if (!entry) die(`no pane found with target '${target}'`);
+
+  const res = await sendCommand(target, { cmd: 'submit', text, keys: ['Enter'] });
+  if (!res.ok) die(res.error);
+}
+
+async function cmdWaitSubmitFile(target, role, timeoutSeconds, filePath) {
+  const fs = require('fs');
+  if (!filePath || !fs.existsSync(filePath)) die(`file not found: ${filePath}`);
+  const text = fs.readFileSync(filePath, 'utf8').trim();
+  if (!text) die('file is empty');
+  return cmdWaitSubmit(target, role, timeoutSeconds, text);
+}
+
 async function cmdWaitSubmit(target, role, timeoutSeconds, text) {
   if (!target || !role || !timeoutSeconds || !text) {
     die("'wait-submit' requires <target> <role> <timeoutSeconds> <text>. Run 'win-bridge' for usage.");
@@ -170,21 +205,36 @@ async function cmdWaitSubmit(target, role, timeoutSeconds, text) {
 
   const timeoutMs = Math.max(1, parseInt(timeoutSeconds, 10) || 0) * 1000;
   const deadline = Date.now() + timeoutMs;
+  let lastOutput = '';
+  let pollCount = 0;
 
   while (Date.now() < deadline) {
     try {
       const res = await sendCommand(target, { cmd: 'read', lines: 20 });
-      if (res.ok && isAgentChatReady(role, res.output)) {
-        const submitRes = await sendCommand(target, { cmd: 'submit', text, keys: ['Enter'] });
-        if (!submitRes.ok) die(submitRes.error);
-        return;
+      pollCount++;
+      if (res.ok) {
+        lastOutput = res.output || '';
+        if (isAgentChatReady(role, lastOutput)) {
+          console.error(`[wait-submit] ${role} ready after ${pollCount} polls, submitting intro`);
+          const submitRes = await sendCommand(target, { cmd: 'submit', text, keys: ['Enter'], delay: 150 });
+          if (!submitRes.ok) die(submitRes.error);
+          return;
+        }
       }
-    } catch {}
+    } catch (err) {
+      console.error(`[wait-submit] poll error for ${target}: ${err.message}`);
+    }
 
     await sleep(WAIT_SUBMIT_POLL_MS);
   }
 
-  die(`timed out waiting for ${role} chat prompt in '${target}'`);
+  console.error(`[wait-submit] timed out for ${role} after ${pollCount} polls — attempting fallback submit. Last output: ${lastOutput.slice(0, 200)}`);
+  try {
+    const submitRes = await sendCommand(target, { cmd: 'submit', text, keys: ['Enter'], delay: 150 });
+    if (!submitRes.ok) die(submitRes.error);
+  } catch (err) {
+    die(`timed out and fallback submit also failed: ${err.message}`);
+  }
 }
 
 async function cmdMessage(target, text) {
@@ -348,8 +398,14 @@ const cmd = argv[0];
       case 'send':
         await cmdSubmit(argv[1], argv[2]);
         break;
+      case 'submit-file':
+        await cmdSubmitFile(argv[1], argv[2]);
+        break;
       case 'wait-submit':
         await cmdWaitSubmit(argv[1], argv[2], argv[3], argv[4]);
+        break;
+      case 'wait-submit-file':
+        await cmdWaitSubmitFile(argv[1], argv[2], argv[3], argv[4]);
         break;
       case 'message':
       case 'msg':

@@ -101,6 +101,7 @@ Core commands:
 - `message <target> <text>`
 - `type <target> <text>`
 - `submit <target> <text>`
+- `submit-file <target> <file>`
 - `keys <target> <key>...`
 - `name <target> <label>`
 - `resolve <label>`
@@ -116,6 +117,17 @@ Core commands:
 3. `read` again before the next interaction
 
 For agent panes, do not poll for replies. The other agent replies back into your own pane.
+
+## Onboarding
+
+When `duo` launches, each agent automatically receives an inline intro message describing the session roles and bridge commands. The intro is delivered via `wait-submit-file`, which polls the pane screen buffer until the agent's chat prompt is ready, then submits the intro text with a short delay before pressing Enter.
+
+`duo` also generates the following files in the target project directory:
+
+- `.duo/DUO.md` — full bridge reference and collaboration rules
+- `CLAUDE.md` — Claude Code reads this at startup (includes DUO.md pointer and bridge commands)
+- `AGENTS.md` — Codex reads this at startup (includes DUO.md pointer and bridge commands)
+- `SKILL.md` — win-bridge command reference card
 
 ## Example Duo Flow
 
@@ -134,4 +146,4 @@ Set `WIN_BRIDGE_VERBOSE_HEADER=1` if you want the older verbose header format.
 
 - `claude` and `codex` are local pane labels
 - `duo` uses Windows Terminal split panes by default
-- `.duo/DUO.md`, `AGENTS.md`, and `CLAUDE.md` are generated in the target project directory to document the local collaboration contract
+- `.duo/DUO.md`, `AGENTS.md`, `CLAUDE.md`, and `SKILL.md` are generated in the target project directory to document the local collaboration contract
