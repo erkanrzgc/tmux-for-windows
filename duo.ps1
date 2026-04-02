@@ -618,75 +618,43 @@ function Write-StartupTrace {
   Write-Host "[startup] $Text"
 }
 
-function Invoke-DuoBackgroundSetup {
+function Start-DuoSetup {
   param(
     [string]$ClaudeIntro,
     [string]$CodexIntro
   )
 
-  try {
-    Wait-BridgeTargetsReady -Targets @('claude', 'codex')
-    $script:VerboseTargets = @('claude', 'codex')
-    Assert-BridgeSession -LeftTarget 'claude' -RightTarget 'codex'
-    Write-StartupTrace 'bridge verified: claude <-> codex'
-
-    if ($StartupDelaySeconds -gt 0) {
-      Write-StartupTrace "settle delay: ${StartupDelaySeconds}s"
-      if (-not $DryRun) {
-        Start-Sleep -Seconds $StartupDelaySeconds
-      }
-    }
-
-    if (-not $SkipIntro) {
-      Start-IntroWatcher -Target 'claude' -Role 'claude' -Text $ClaudeIntro
-      Start-IntroWatcher -Target 'codex' -Role 'codex' -Text $CodexIntro
-    }
-  } catch {
-    $message = $_.Exception.Message
-    Write-StartupTrace "startup error: $message"
-    if (-not $DryRun) {
-      exit 1
-    }
-    throw
-  }
-}
-
-function Start-AsyncDuoSetup {
-  param(
-    [string]$ClaudeIntro,
-    [string]$CodexIntro
-  )
+  $setupPath = Join-Path $PSScriptRoot 'bin\duo-setup.js'
 
   if ($DryRun) {
-    Write-Host 'DRYRUN background duo setup'
-    Invoke-DuoBackgroundSetup -ClaudeIntro $ClaudeIntro -CodexIntro $CodexIntro
+    Write-Host "DRYRUN node $setupPath $ReadyTimeoutSeconds 15 <claudeIntro> <codexIntro>"
     return
   }
 
-  $argumentList = @(
-    '-NoLogo',
-    '-NoProfile',
-    '-ExecutionPolicy',
-    'Bypass',
-    '-File',
-    $script:SelfPath,
-    '-BackgroundSetup',
-    '-ProjectDir',
-    $script:ProjectDir,
-    '-ReadyTimeoutSeconds',
+  $claudeFile = Join-Path ([System.IO.Path]::GetTempPath()) 'duo-intro-claude.tmp'
+  $codexFile = Join-Path ([System.IO.Path]::GetTempPath()) 'duo-intro-codex.tmp'
+  Set-Content -LiteralPath $claudeFile -Value $ClaudeIntro -Encoding utf8 -NoNewline
+  Set-Content -LiteralPath $codexFile -Value $CodexIntro -Encoding utf8 -NoNewline
+
+  $setupArgs = @(
+    $setupPath,
     [string]$ReadyTimeoutSeconds,
-    '-StartupDelaySeconds',
-    [string]$StartupDelaySeconds
+    '15',
+    $claudeFile,
+    $codexFile
   )
 
   if ($SkipIntro) {
-    $argumentList += '-SkipIntro'
+    # Only pass ready/intro timeouts, no intro files
+    $setupArgs = @($setupPath, [string]$ReadyTimeoutSeconds, '15')
   }
 
-  Start-Process -FilePath 'powershell.exe' `
+  Start-Process -FilePath $script:NodePath `
     -WorkingDirectory $script:ProjectDir `
     -WindowStyle Hidden `
-    -ArgumentList $argumentList | Out-Null
+    -ArgumentList $setupArgs | Out-Null
+
+  Write-StartupTrace 'duo-setup launched (single Node.js process)'
 }
 
 function Start-StandaloneWindow {
@@ -762,7 +730,7 @@ $claudeIntro = 'You are in a duo session. There is a "codex" agent running in th
 $codexIntro = 'You are in a duo session. There is a "claude" agent running in the left pane. To communicate with it use win-bridge: 1) win-bridge read claude 20  2) win-bridge message claude "your message"  3) win-bridge read claude 20  4) win-bridge keys claude Enter. When claude replies, you will see [claude] in your pane. You are ready to collaborate.'
 
 if ($BackgroundSetup) {
-  Invoke-DuoBackgroundSetup -ClaudeIntro $claudeIntro -CodexIntro $codexIntro
+  # Legacy: handled by duo-setup.js now
   return
 }
 
@@ -801,8 +769,7 @@ if (-not $usedWindowsTerminal) {
   Start-StandaloneWindow -LauncherCommand $codexLauncher
 }
 
-Write-Host 'Background startup will continue inside the duo panes.'
-Start-AsyncDuoSetup -ClaudeIntro $claudeIntro -CodexIntro $codexIntro
+Start-DuoSetup -ClaudeIntro $claudeIntro -CodexIntro $codexIntro
 Write-Host 'Duo session launched.'
 if ($usedWindowsTerminal) {
   Write-Host 'Launched in Windows Terminal split panes: Claude left, Codex right.'
