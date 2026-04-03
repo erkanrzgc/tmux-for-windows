@@ -166,4 +166,4 @@ duo -DryRun      # trace the launch flow without opening panes
 
 ## License
 
-MIT
+This project is licensed under the MIT License. See the LICENSE file for more details.
