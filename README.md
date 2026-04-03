@@ -148,6 +148,16 @@ duo (PowerShell)
 
 Each wrapped pane runs a named-pipe server. `win-bridge` commands communicate via these pipes — no file polling, no HTTP.
 
+## Agent Onboarding
+
+Paste this into Claude Code to set up tmux-for-windows automatically:
+
+```
+Fetch and follow the onboarding instructions from: https://raw.githubusercontent.com/erkanrzgc/tmux-for-windows/main/tools/onboarding-prompt.md
+```
+
+Claude will clone the repo, install dependencies, verify the setup, and walk you through launching your first duo session.
+
 ## Troubleshooting
 
 ```powershell
