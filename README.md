@@ -1,26 +1,18 @@
 # tmux-for-windows
 
-Windows split-pane workflow for AI agents.
+One-command dual-agent setup with terminal bridge for AI agents on Windows.
 
-`tmux-for-windows` provides:
+- **For you** — `duo` opens a split terminal with Claude Code and OpenAI Codex side by side, ready to collaborate
+- **For agents** — `win-bridge` CLI lets any agent read, type into, and send keys to any pane
+- **Agent-to-agent** — Claude Code can prompt Codex in the next pane, and Codex replies back. Any agent that can run commands can participate.
 
-- `duo`: opens a Windows Terminal split with Claude Code on the left and OpenAI Codex on the right
-- `win-bridge`: lets one pane read, type into, and send keys to another pane
-- local duo onboarding that teaches both agents how to collaborate without polling
+```powershell
+win-bridge read codex 20                        # read the pane
+win-bridge message codex "review src/auth.ts"   # send a message
+win-bridge keys codex Enter                     # press enter
+```
 
-This project is inspired by tmux-based agent workflows on Linux, but it is implemented for Windows with PowerShell, Windows Terminal, and named pipes.
-
-## Requirements
-
-- Windows Terminal
-- PowerShell
-- Node.js 18+
-- `claude` available on `PATH`
-- `codex` available on `PATH`
-
-## Install From Source
-
-Recommended:
+## Install
 
 ```powershell
 git clone https://github.com/erkanrzgc/tmux-for-windows.git
@@ -28,35 +20,17 @@ cd tmux-for-windows
 powershell -ExecutionPolicy Bypass -File .\install.ps1
 ```
 
-Manual flow:
+This installs:
 
-```powershell
-git clone https://github.com/erkanrzgc/tmux-for-windows.git
-cd tmux-for-windows
-npm install
-npm link
-win-bridge version
-duo -DryRun
-```
+- **node-pty** native terminal emulation
+- **win-bridge** CLI for cross-pane agent communication
+- **duo** CLI for launching split-pane agent sessions
 
-What each step does:
-
-- `install.ps1` runs the full source install and verification flow for Windows
-- `npm install` installs the local project dependencies
-- `npm link` links `win-bridge` and `duo` into your user PATH
-- `win-bridge version` confirms the CLI is callable
-- `duo -DryRun` confirms the launch script and bridge flow resolve correctly without opening a real session
-
-If you want a broader environment check, run:
-
-```powershell
-duo doctor
-win-bridge doctor
-```
+Everything links into your PATH via `npm link`.
 
 ## Quick Start
 
-Open a project directory and run:
+Open any project directory and run:
 
 ```powershell
 duo
@@ -68,47 +42,64 @@ Or launch for a specific directory:
 duo -ProjectDir C:\path\to\project
 ```
 
-`duo` opens a left/right split, starts Claude Code and OpenAI Codex, verifies the bridge, then sends each pane a short collaboration intro.
+What happens:
 
-## Troubleshooting
+1. Windows Terminal opens with a left/right split
+2. Claude Code starts in the left pane, Codex in the right
+3. Both agents receive an inline onboarding intro within ~5 seconds
+4. Agents read `.duo/DUO.md` and are ready to collaborate
 
-Use these commands first:
+## Keybindings
 
-```powershell
-duo doctor
-win-bridge doctor
-duo -DryRun
-```
+Windows Terminal default keybindings for pane management:
 
-`duo doctor` checks whether PowerShell, Windows Terminal, Claude Code, Codex, `win-bridge`, and `duo` are available on your machine.
-`win-bridge doctor` also prunes stale pane entries from the local registry when it finds unreachable panes.
+### Panes
 
-## win-bridge Commands
+| Key | Action |
+|---|---|
+| `Alt+Shift+D` | Split pane (duplicate) |
+| `Alt+Shift+-` | Split pane horizontal |
+| `Alt+Shift+=` | Split pane vertical |
+| `Alt+Arrow` | Navigate between panes |
+| `Ctrl+Shift+W` | Close pane |
 
-```powershell
-win-bridge list
-win-bridge read codex 20
-win-bridge message codex "review src/auth.ts"
-win-bridge read codex 20
-win-bridge keys codex Enter
-```
+### Tabs
 
-Core commands:
+| Key | Action |
+|---|---|
+| `Ctrl+Shift+T` | New tab |
+| `Ctrl+Tab` | Next tab |
+| `Ctrl+Shift+Tab` | Previous tab |
+| `Ctrl+Shift+W` | Close tab |
 
-- `wrap <name> [-- cmd args...]`
-- `list`
-- `read <target> [lines]`
-- `message <target> <text>`
-- `type <target> <text>`
-- `submit <target> <text>`
-- `submit-file <target> <file>`
-- `keys <target> <key>...`
-- `name <target> <label>`
-- `resolve <label>`
-- `id`
-- `doctor`
+### Scrolling
 
-## Read Guard
+| Key | Action |
+|---|---|
+| `Ctrl+Shift+Up` | Scroll up |
+| `Ctrl+Shift+Down` | Scroll down |
+| `Ctrl+Shift+PgUp` | Scroll page up |
+| `Ctrl+Shift+PgDn` | Scroll page down |
+
+## win-bridge
+
+A CLI for cross-pane communication. Any tool that can run commands can use it — Claude Code, Codex, or a plain script.
+
+| Command | Description |
+|---|---|
+| `win-bridge list` | Show all active panes |
+| `win-bridge read <target> [lines]` | Read last N lines from a pane (default: 20) |
+| `win-bridge message <target> <text>` | Send a labeled message and press Enter |
+| `win-bridge type <target> <text>` | Type text into a pane (no Enter) |
+| `win-bridge submit <target> <text>` | Type text and press Enter |
+| `win-bridge submit-file <target> <file>` | Read text from file and submit |
+| `win-bridge keys <target> <key>...` | Send special keys (Enter, Escape, C-c, etc.) |
+| `win-bridge name <target> <label>` | Label a pane for easy addressing |
+| `win-bridge resolve <label>` | Look up a pane by label |
+| `win-bridge id` | Print this pane's ID |
+| `win-bridge doctor` | Diagnose connectivity issues |
+
+### Read Guard
 
 `win-bridge` enforces a read-before-act cycle:
 
@@ -116,34 +107,63 @@ Core commands:
 2. `message`, `type`, `submit`, or `keys`
 3. `read` again before the next interaction
 
-For agent panes, do not poll for replies. The other agent replies back into your own pane.
+For agent panes, do not poll for replies. The other agent replies directly into your pane.
 
-## Onboarding
+## duo
 
-When `duo` launches, each agent automatically receives an inline intro message describing the session roles and bridge commands. The intro is delivered via `wait-submit-file`, which polls the pane screen buffer until the agent's chat prompt is ready, then submits the intro text with a short delay before pressing Enter.
+| Command | Description |
+|---|---|
+| `duo` | Launch a duo session in the current directory |
+| `duo -ProjectDir <path>` | Launch for a specific directory |
+| `duo -SplitDirection horizontal` | Top/bottom split instead of left/right |
+| `duo -SplitRatio 0.6` | Adjust split ratio (default: 0.5) |
+| `duo -SkipIntro` | Skip onboarding intro delivery |
+| `duo -DryRun` | Trace the launch without opening anything |
+| `duo doctor` | Check environment and dependencies |
 
-`duo` also generates the following files in the target project directory:
+## Generated Files
 
-- `.duo/DUO.md` — full bridge reference and collaboration rules
-- `CLAUDE.md` — Claude Code reads this at startup (includes DUO.md pointer and bridge commands)
-- `AGENTS.md` — Codex reads this at startup (includes DUO.md pointer and bridge commands)
-- `SKILL.md` — win-bridge command reference card
+When `duo` launches, it generates these files in the target project:
 
-## Example Duo Flow
+| File | Purpose |
+|---|---|
+| `.duo/DUO.md` | Full bridge reference and collaboration rules |
+| `CLAUDE.md` | Claude Code reads this at startup (bridge commands, session role) |
+| `AGENTS.md` | Codex reads this at startup (bridge commands, session role) |
+| `SKILL.md` | win-bridge command reference card |
 
-```powershell
-win-bridge read claude 20
-win-bridge message claude "Please review src/auth.ts"
-win-bridge read claude 20
-win-bridge keys claude Enter
+## Architecture
+
+```
+duo (PowerShell)
+  |-- Creates instruction files (.duo/DUO.md, CLAUDE.md, AGENTS.md, SKILL.md)
+  |-- Opens Windows Terminal with two split panes
+  |     |-- Left:  win-bridge wrap claude -- claude
+  |     |-- Right: win-bridge wrap codex -- codex
+  |-- Launches duo-setup.js (single background Node.js process)
+        |-- Phase 1: Ping both panes in parallel until registered
+        |-- Phase 2: Verify bridge (both panes reachable and distinct)
+        |-- Phase 3: Deliver intro to both agents simultaneously
 ```
 
-Replies appear in your pane with a short sender prefix such as `[claude]`.
+Each wrapped pane runs a named-pipe server. `win-bridge` commands communicate via these pipes — no file polling, no HTTP.
 
-Set `WIN_BRIDGE_VERBOSE_HEADER=1` if you want the older verbose header format.
+## Troubleshooting
 
-## Notes
+```powershell
+duo doctor       # check all dependencies
+win-bridge doctor  # check pane connectivity, prune stale entries
+duo -DryRun      # trace the launch flow without opening panes
+```
 
-- `claude` and `codex` are local pane labels
-- `duo` uses Windows Terminal split panes by default
-- `.duo/DUO.md`, `AGENTS.md`, `CLAUDE.md`, and `SKILL.md` are generated in the target project directory to document the local collaboration contract
+## Requirements
+
+- Windows Terminal
+- PowerShell
+- Node.js 18+
+- `claude` CLI on PATH
+- `codex` CLI on PATH
+
+## License
+
+MIT
